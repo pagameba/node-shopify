@@ -1,0 +1,23 @@
+{
+  "author": "Paul Spencer <paul@pagameba.com>",
+  "name": "shopify",
+  "description": "Playground for interacting with Shopify APIs via nodejs",
+  "version": "0.0.0",
+  "homepage": "https://github.com/pagameba/node-shopify",
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/pagameba/node-shopify.git"
+  },
+  "main": "app.js",
+  "dependencies": {
+    "express": "~2.5.9",
+    "less": "~1.3.0",
+    "handlebars": "~1.0.5beta",
+    "hbs": "~1.0.2"
+  },
+  "devDependencies": {},
+  "optionalDependencies": {},
+  "engines": {
+    "node": "*"
+  }
+}
