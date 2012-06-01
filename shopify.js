@@ -111,20 +111,29 @@ function configureApp(config) {
   
   app.get('/authorize', function(req, res){
       req.session.shopify = {
-       shopName: req.query.shopName,
+       domain: req.query.shopName+'.myshopify.com',
        clientId: req.query.clientId,
        clientSecret: req.query.clientSecret,
        referer: req.headers.referer,
        scope: req.query.scope
       };
-      var authUrl = 'https://'+req.query.shopName + '.myshopify.com/admin/oauth/authorize';
-      var params = {
-        client_id: req.query.clientId,
-        scope: req.query.scope,
-      };
-      authUrl += '?' + qs.stringify(params);
-      console.log('redirecting to '+authUrl);
-      res.redirect(authUrl);
+      
+      ar.Shop.findByDomain(req.session.shopify.domain, function(shop){
+          if (shop && shop.access_token) {
+            console.log('shop record already authorized');
+            req.session.shopify.access_token = shop.access_token;
+            res.redirect(req.session.shopify.referer);
+          } else {
+            var authUrl = 'https://'+req.session.shopify.domain + '/admin/oauth/authorize';
+            var params = {
+              client_id: req.query.clientId,
+              scope: req.query.scope,
+            };
+            authUrl += '?' + qs.stringify(params);
+            console.log('redirecting to '+authUrl);
+            res.redirect(authUrl);
+          }
+      });
   });
   
   app.get('/callback', function(req, res, next) {
@@ -157,15 +166,16 @@ function configureApp(config) {
                 request.get({
                  url: storeInfoUrl,
                  headers: {
-                   'X-Shopify-Access-Token': body.access_token
+                   'X-Shopify-Access-Token': req.session.shopify.accessToken
                  }
-                }, function(err, req3, body) {
+                }, function(err, req3, body2) {
                     if (req3.statusCode < 400) {
-                      console.log('shop info:'+body);
-                      var attrs = JSON.parse(body);
-                      attrs.shop.shopifyId = attrs.shop.id; //ID is special for ar
-                      delete attrs.shop.id;                 //rename it to shopifyId
-                      var shopifyStore = ar.Shop.create(attrs.shop);
+                      console.log('shop info:'+body2);
+                      var shop = JSON.parse(body2).shop;
+                      shop.shopifyId = shop.id; //ID is special for ar
+                      delete shop.id;           //rename it to shopifyId
+                      shop.access_token = req.session.shopify.accessToken;
+                      var shopifyStore = ar.Shop.create(shop);
                       shopifyStore.save(function(err,obj) {
                         if (err) {
                           console.log('error creating shopify record', err);
