@@ -69,7 +69,21 @@ app.get('/callback', function(req, res, next) {
               req.session.shopify.accessToken = body.access_token;
               //store access_token in the DB
               //get the shop info and store in DB
-              res.redirect(req.session.shopify.referer);
+              var storeInfoUrl = 'https://'+req.query.shop + '/admin/shop.json';
+              request.get({
+               url: storeInfoUrl,
+               headers: {
+                 'X-Shopify-Access-Token': body.access_token
+               }
+              }, function(err, req3, body) {
+                  if (req3.statusCode < 400) {
+                    console.log('shop info:'+body);
+                    res.redirect(req.session.shopify.referer);
+                  } else {
+                    console.log('error getting store info');
+                    res.json({success:false}, req3.statusCode);
+                  }
+              });
             }
           }
         }
