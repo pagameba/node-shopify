@@ -1,7 +1,12 @@
 var express = require('express')
+  , EventEmitter = require('events').EventEmitter
+  , emitter = new EventEmitter()
   , url = require("url")
   , request = require('request')
   , qs = require('qs')
+  , cradle = require('cradle')
+  , ar = require('couch-ar')
+  , ccdb = require('connect-couchdb')(express)
   , app = express.createServer();
   
   
@@ -157,7 +162,19 @@ function configureApp(config) {
                 }, function(err, req3, body) {
                     if (req3.statusCode < 400) {
                       console.log('shop info:'+body);
-                      res.redirect(req.session.shopify.referer);
+                      var attrs = JSON.parse(body);
+                      attrs.shop.shopifyId = attrs.shop.id; //ID is special for ar
+                      delete attrs.shop.id;                 //rename it to shopifyId
+                      var shopifyStore = ar.Shop.create(attrs.shop);
+                      shopifyStore.save(function(err,obj) {
+                        if (err) {
+                          console.log('error creating shopify record', err);
+                          res.json({success:false}, 500);
+                        } else {
+                          console.log('created shopify record');
+                          res.redirect(req.session.shopify.referer);
+                        }
+                      });
                     } else {
                       console.log('error getting store info');
                       res.json({success:false}, req3.statusCode);
