@@ -311,13 +311,24 @@ function configureApp(config) {
     var params = JSON.parse(JSON.stringify(req.body));
     console.log('response headers:'+req.session.shopify.access_token);
     //params required by shopify
-    params.title = params.name;
-    params.product_type = 'online-map';
-    params.vendor = 'mapsherpa';
-    console.log('params:'+JSON.stringify(params));
+    var options = {
+      "product": {
+        "title": params.name,
+        "vendor": 'mapsherpa',
+        "product_type": 'online-map',
+        "variants": [
+          {
+            "option1": params.tileset,
+            "price": params.price,
+            "sku": params.sku
+          }
+        ]
+      }
+    }      
+    console.log('params:'+JSON.stringify(options));
     request.post({
        url: url, 
-       json: params,
+       json: options,
        headers: {
          'X-Shopify-Access-Token': req.session.shopify.access_token
        }
@@ -349,10 +360,23 @@ function configureApp(config) {
   app.put('/products/:id', function(req, res, next) {
     var url =  'https://'+req.session.shopify.domain + '/admin/products/'+req.params.id+'.json';
     var params = JSON.parse(JSON.stringify(req.body));
-    params.title = params.name;
+    var options = {
+      "product": {
+        "title": params.name,
+        "vendor": 'mapsherpa',
+        "product_type": 'online-map',
+        "variants": [
+          {
+            "option1": params.tileset,
+            "price": params.price,
+            "sku": params.sku
+          }
+        ]
+      }
+    }      
     request.put({
        url: url, 
-       json: params,
+       json: options,
        headers: {
          'X-Shopify-Access-Token': req.session.shopify.access_token
        }
@@ -361,25 +385,39 @@ function configureApp(config) {
           console.log('error updating shopify product'+ err);
           res.json({success:false}, 500);
         } else {
-          console.log('product updated');
-          res.json({success: true, products: products}, 200);
+          var response;
+          if (typeof(body) == 'string') {
+            console.log('response body:'+body);
+            response = JSON.parse(body);
+          } else {
+            console.log('response body:'+JSON.stringify(body));
+            response = body;
+          }
+          if (response.errors) {
+            console.log('error updating product:'+response.errors);
+            res.json({success:false, message:response.errors}, 500);
+          } else {
+            var products = response.product;
+            console.log('product updated');
+            res.json({success: true, products: products}, 200);
+          }
         }
     });
   });
   app['delete']('/products/:id', function(req, res, next) {
     var url =  'https://'+req.session.shopify.domain + '/admin/products/'+req.params.id+'.json';
-    request['delete']({
+    request.del({
       url: url,
        headers: {
          'X-Shopify-Access-Token': req.session.shopify.access_token
        }
     }, function (err, req2, body) {
-        if (err) {
+        if (req2.statusCode >= 400) {
           console.log('error deleting shopify product'+ err);
           res.json({success:false}, 500);
         } else {
           console.log('product deleted');
-          res.json({success: true, products: products}, 200);
+          res.json({success: true}, 200);
         }
     });
   });
