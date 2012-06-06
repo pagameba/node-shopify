@@ -17,8 +17,9 @@ var express = require('express')
 // require('manage.js')(config).on('init', function(server) {
 //   server.listen(port);
 // });
-
+var clientName = '';
 module.exports = function(config) {
+  clientName = config.name;
   configureServer(config);
   return emitter;
 }
@@ -100,10 +101,47 @@ function configureApp(config) {
       secret: 'secret',
       store: store
     }));
+    app.use(shopSetup());
     app.use(express.compiler({ src: __dirname + '/public', enable: ['less'] }));
     app.use(express.static(__dirname + '/public'));
     app.use(app.router);
   });
+  
+
+  function shopSetup(){
+    return function (req, res, next) {
+      console.log('shopSetup');
+      if (!req.session.shopify) {
+        console.log('new session');
+        ar.Shop.findByOwner(clientName, function(shop){
+            if (shop && shop.access_token) {
+              console.log('shop record authorized in the DB');
+              req.session.shopify = {
+                access_token: shop.access_token,
+                domain: shop.domain
+              };
+              if (req.session.shopify && req.session.shopify.access_token) {
+                next();
+              } else {
+                console.log('store is not authorized', err);
+                res.json({success:false}, 500);
+              }
+            } else {
+              console.log('store in DB is not authorized');
+              res.json({success:false}, 500);
+            }
+        });
+      } else {
+        console.log('existing session');
+        if (req.session.shopify.access_token) {
+          next();
+        } else {
+          console.log('store is not authorized', err);
+          res.json({success:false}, 500);
+        }
+      }
+    };
+  }
   
   app.get('/', function(req, res, next) {
     res.render('index.hbs', {});
@@ -159,22 +197,24 @@ function configureApp(config) {
                 res.json({success:false}, req2.statusCode);
               } else {
                 console.log('shopify token success:'+body.access_token);
-                req.session.shopify.accessToken = body.access_token;
+                req.session.shopify.access_token = body.access_token;
                 //store access_token in the DB
                 //get the shop info and store in DB
                 var storeInfoUrl = 'https://'+req.query.shop + '/admin/shop.json';
                 request.get({
-                 url: storeInfoUrl,
-                 headers: {
-                   'X-Shopify-Access-Token': req.session.shopify.accessToken
-                 }
+                   url: storeInfoUrl,
+                   headers: {
+                     'X-Shopify-Access-Token': req.session.shopify.access_token
+                   }
                 }, function(err, req3, body2) {
                     if (req3.statusCode < 400) {
                       console.log('shop info:'+body2);
                       var shop = JSON.parse(body2).shop;
                       shop.shopifyId = shop.id; //ID is special for ar
                       delete shop.id;           //rename it to shopifyId
-                      shop.access_token = req.session.shopify.accessToken;
+                      shop.access_token = req.session.shopify.access_token;
+                      console.log('set shop owner to:'+clientName);
+                      shop.owner = clientName;
                       var shopifyStore = ar.Shop.create(shop);
                       shopifyStore.save(function(err,obj) {
                         if (err) {
@@ -194,6 +234,154 @@ function configureApp(config) {
             }
           }
       });
+  });
+  
+  //Product routes
+  //get all products
+  app.get('/products', function(req, res, next) {
+    var url = 'https://'+req.session.shopify.domain + '/admin/products.json';
+    console.log('access token:'+req.session.shopify.access_token);
+    request.get({
+       url: url,
+       headers: {
+         'X-Shopify-Access-Token': req.session.shopify.access_token
+       }
+    }, function (err, req2, body) {
+        if (err) {
+          console.log('error reading shopify product'+ err);
+          res.json({success:false}, 500);
+        } else {
+          var response;
+          if (typeof(body) == 'string') {
+            response = JSON.parse(body);
+          } else {
+            response = body;
+          }
+          if (response.errors) {
+            console.log('error reading products:'+response.errors);
+            res.json({success:false, message:response.errors}, 500);
+          } else {
+            var products = response.products;
+            res.json({success: true, products: products}, 200);
+          }
+        }
+    });
+  });
+  //get a single product
+  app.get('/products/:id', function(req, res, next) {
+    var url;
+    if (req.params.id) {
+      url =  'https://'+req.session.shopify.domain + '/admin/products/'+req.params.id+'.json';
+    } else {
+      console.log('product id missing');
+      res.json({success:false, message:'product id missing'}, 500);
+      return;
+    }
+    console.log('access token:'+req.session.shopify.access_token);
+    console.log('accessing url:'+url);
+    request.get({
+       url: url,
+       headers: {
+         'X-Shopify-Access-Token': req.session.shopify.access_token
+       }
+    }, function (err, req2, body) {
+        if (err) {
+          console.log('error reading shopify product'+ err);
+          res.json({success:false}, 500);
+        } else {
+          var response;
+          if (typeof(body) == 'string') {
+            console.log(body);
+            response = JSON.parse(body);
+          } else {
+            response = body;
+          }
+          if (response.errors) {
+            console.log('error reading products:'+response.errors);
+            res.json({success:false, message:response.errors}, 500);
+          } else {
+            var products = response.product;
+           res.json({success: true, products: products}, 200);
+          }
+        }
+    });
+  });
+  app.post('/products', function(req, res, next) {
+    var url =  'https://'+req.session.shopify.domain + '/admin/products.json';
+    var params = JSON.parse(JSON.stringify(req.body));
+    console.log('response headers:'+req.session.shopify.access_token);
+    //params required by shopify
+    params.title = params.name;
+    params.product_type = 'online-map';
+    params.vendor = 'mapsherpa';
+    console.log('params:'+JSON.stringify(params));
+    request.post({
+       url: url, 
+       json: params,
+       headers: {
+         'X-Shopify-Access-Token': req.session.shopify.access_token
+       }
+    }, function (err, req2, body) {
+        console.log('creating product status:'+req2.statusCode);
+        if (err) {
+          console.log('error creating shopify product'+ err);
+          res.json({success:false}, 500);
+        } else {
+          var response;
+          if (typeof(body) == 'string') {
+            console.log('response body:'+body);
+            response = JSON.parse(body);
+          } else {
+            console.log('response body:'+JSON.stringify(body));
+            response = body;
+          }
+          if (response.errors) {
+            console.log('error creating product:'+response.errors);
+            res.json({success:false, message:response.errors}, 500);
+          } else {
+            var products = response.product;
+            console.log('product created');
+            res.json({success: true, products: products}, 200);
+          }
+        }
+    });
+  });
+  app.put('/products/:id', function(req, res, next) {
+    var url =  'https://'+req.session.shopify.domain + '/admin/products/'+req.params.id+'.json';
+    var params = JSON.parse(JSON.stringify(req.body));
+    params.title = params.name;
+    request.put({
+       url: url, 
+       json: params,
+       headers: {
+         'X-Shopify-Access-Token': req.session.shopify.access_token
+       }
+    }, function (err, req2, body) {
+        if (err) {
+          console.log('error updating shopify product'+ err);
+          res.json({success:false}, 500);
+        } else {
+          console.log('product updated');
+          res.json({success: true, products: products}, 200);
+        }
+    });
+  });
+  app['delete']('/products/:id', function(req, res, next) {
+    var url =  'https://'+req.session.shopify.domain + '/admin/products/'+req.params.id+'.json';
+    request['delete']({
+      url: url,
+       headers: {
+         'X-Shopify-Access-Token': req.session.shopify.access_token
+       }
+    }, function (err, req2, body) {
+        if (err) {
+          console.log('error deleting shopify product'+ err);
+          res.json({success:false}, 500);
+        } else {
+          console.log('product deleted');
+          res.json({success: true, products: products}, 200);
+        }
+    });
   });
   
   app.error(function(err, req, res) {

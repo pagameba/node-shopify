@@ -13,6 +13,7 @@ require('couch-ar').create('Shop', {
     name: {},
     timezone: {},
     shop_owner: {},
+    owner: {},
     taxes_included: {},
     tax_shipping: {},
     myshopify_domain: {}
@@ -42,6 +43,7 @@ require('couch-ar').create('Shop', {
       email: this.email,
       shopifyId: this.shopifyId,
       name: this.name,
+      owner: this.owner,
       timezone: this.timezone,
       shop_owner: this.shop_owner,
       taxes_included: this.taxes_included,
