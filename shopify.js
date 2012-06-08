@@ -18,10 +18,10 @@ var express = require('express')
 //   server.listen(port);
 // });
 var clientName = ''
- , clientDomain = '';
+ , webhookDomain = '';
 module.exports = function(config) {
   clientName = config.name;
-  clientDomain = config.smtp.clientDomain;
+  webhookDomain = config.smtp.webhookDomain;
   configureServer(config);
   return emitter;
 }
@@ -232,7 +232,7 @@ function configureApp(config) {
                           var webhook = {
                             "webhook": {
                               "topic": "orders/paid",
-                              "address": clientDomain + '/fullfill',
+                              "address": webhookDomain + '/fullfill',
                               "format": "json"
                             }
                           };

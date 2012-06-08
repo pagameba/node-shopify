@@ -45,10 +45,8 @@ var clientConfig = {
     name: client + '-clientdb',
     session: client + '-clientdb-sessions'
   },
-  smtp: {
-    clientDomain: 'http://localhost:8003'
-  },
   shopify: {
+    webhookDomain: 'http://localhost:8003'
     ports: {
       production: 9003,
       development: 8003
