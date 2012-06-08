@@ -45,6 +45,9 @@ var clientConfig = {
     name: client + '-clientdb',
     session: client + '-clientdb-sessions'
   },
+  smtp: {
+    clientDomain: 'http://localhost:8003'
+  },
   shopify: {
     ports: {
       production: 9003,
@@ -118,6 +121,7 @@ mapsherpa.exists(function(err, exists) {
     // now we can try launching
     var port = doc[server].ports[mode];
     
+    console.log('config', doc)
     if (mode == "production") {
       console.log('launching '+server+' server in production mode, building assets');
       requirejs.optimize(buildConfig, function(buildResponse) {

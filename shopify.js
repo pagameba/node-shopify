@@ -17,9 +17,11 @@ var express = require('express')
 // require('manage.js')(config).on('init', function(server) {
 //   server.listen(port);
 // });
-var clientName = '';
+var clientName = ''
+ , clientDomain = '';
 module.exports = function(config) {
   clientName = config.name;
+  clientDomain = config.smtp.clientDomain;
   configureServer(config);
   return emitter;
 }
@@ -110,34 +112,39 @@ function configureApp(config) {
 
   function shopSetup(){
     return function (req, res, next) {
-      console.log('shopSetup');
-      if (!req.session.shopify) {
-        console.log('new session');
-        ar.Shop.findByOwner(clientName, function(shop){
-            if (shop && shop.access_token) {
-              console.log('shop record authorized in the DB');
-              req.session.shopify = {
-                access_token: shop.access_token,
-                domain: shop.domain
-              };
-              if (req.session.shopify && req.session.shopify.access_token) {
-                next();
+      console.log('shopSetup for:'+req.url);
+      if (req.url.indexOf('authorize')>=0 ||req.url.indexOf('callback')>=0) {
+         console.log('oauth shortcut');
+         next();
+      } else {
+        if (!req.session.shopify) {
+          console.log('new session');
+          ar.Shop.findByOwner(clientName, function(shop){
+              if (shop && shop.access_token) {
+                console.log('shop record authorized in the DB');
+                req.session.shopify = {
+                  access_token: shop.access_token,
+                  domain: shop.domain
+                };
+                if (req.session.shopify && req.session.shopify.access_token) {
+                  next();
+                } else {
+                  console.log('store is not authorized');
+                  res.json({success:false}, 500);
+                }
               } else {
-                console.log('store is not authorized', err);
+                console.log('store in DB is not authorized');
                 res.json({success:false}, 500);
               }
-            } else {
-              console.log('store in DB is not authorized');
-              res.json({success:false}, 500);
-            }
-        });
-      } else {
-        console.log('existing session');
-        if (req.session.shopify.access_token) {
-          next();
+          });
         } else {
-          console.log('store is not authorized', err);
-          res.json({success:false}, 500);
+          console.log('existing session');
+          if (req.session.shopify.access_token) {
+            next();
+          } else {
+            console.log('store is not authorized');
+            res.json({success:false}, 500);
+          }
         }
       }
     };
@@ -222,7 +229,29 @@ function configureApp(config) {
                           res.json({success:false}, 500);
                         } else {
                           console.log('created shopify record');
-                          res.redirect(req.session.shopify.referer);
+                          var webhook = {
+                            "webhook": {
+                              "topic": "orders/paid",
+                              "address": clientDomain + '/fullfill',
+                              "format": "json"
+                            }
+                          };
+                          var webhookUrl = 'https://'+req.query.shop + '/admin/webhooks.json';
+                          request.post({
+                              url: webhookUrl,
+                              json: webhook,
+                              headers: {
+                                 'X-Shopify-Access-Token': req.session.shopify.access_token
+                              }
+                          }, function(err, req4, body4) {
+                            if (req4.statusCode < 400) {
+                              console.log('webhook info:'+body4);
+                              res.redirect(req.session.shopify.referer);
+                            } else {
+                              console.log('error creating shopify webhook', JSON.stringify(req4));
+                              res.json({success:false}, 500);
+                            }
+                          });
                         }
                       });
                     } else {
@@ -234,6 +263,11 @@ function configureApp(config) {
             }
           }
       });
+  });
+  
+  app.post('/fullfill', function(req, res, next) {
+      console.log('fullfilling:'+JSON.stringify(req.body));
+      res.json({success:true}, 200);
   });
   
   //Product routes
