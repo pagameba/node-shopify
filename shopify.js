@@ -7,7 +7,10 @@ var express = require('express')
   , cradle = require('cradle')
   , ar = require('couch-ar')
   , ccdb = require('connect-couchdb')(express)
-  , app = express.createServer();
+  , app = express.createServer()
+  , shop
+  , authRequest
+  ;
   
   
 // the module is bootstrapped by calling it with an configuration object.  The
@@ -60,35 +63,45 @@ function configureServer(config) {
         sessionDB.create(function(){});
       }
       // synchronous, configure the express server
-      configureApp(config);
-      emitter.emit('init', app);
+      configureShop(config, function(){
+        configureApp(config);
+        emitter.emit('init', app);
+      });
     });
   });
   
 }
 
+function configureShop(config, next) {
+  ar.Shop.findByDomain(config.shopify.shopDomain, function(aShop){
+    if (aShop) {
+      if (aShop.access_token) {
+        shop = aShop;
+        console.log('shop record authorized in the DB');
+      } else {
+        console.log('Shop record without token found');
+        
+        // TODO: can we reauthorize?
+        
+        process.exit();
+      }
+    } else {
+      console.log('no shop record.');
+    }
+    next();
+  });
+}
+
+function validShop(req, res, next) {
+  if (shop && shop.access_token) {
+    return next();
+  } else {
+    return next(new Error(401));
+  }
+}
+
 
 function configureApp(config) {
-  
-  var store = new ccdb({
-    // Name of the database you would like to use for sessions.
-    name: config.db.session,
-  
-    // Optional. How often expired sessions should be cleaned up.
-    // Defaults to 600000 (10 minutes).
-    reapInterval: 600000,
-  
-    // Optional. How often to run DB compaction against the session
-    // database. Defaults to 300000 (5 minutes).
-    // To disable compaction, set compactInterval to -1
-    compactInterval: 300000,
-    
-    host: config.db.host,
-    port: config.db.port,
-    username: config.db.user,
-    password: config.db.pass
-  });
-    
   
   app.configure(function(){
     app.set('views', __dirname + '/views');
@@ -99,97 +112,48 @@ function configureApp(config) {
     app.use(express.methodOverride());
     app.use(express.bodyParser());
     app.use(express.cookieParser());
-    app.use(express.session({
-      secret: 'secret',
-      store: store
-    }));
-    app.use(shopSetup());
     app.use(express.compiler({ src: __dirname + '/public', enable: ['less'] }));
     app.use(express.static(__dirname + '/public'));
     app.use(app.router);
   });
   
 
-  function shopSetup(){
-    return function (req, res, next) {
-      console.log('shopSetup for:'+req.url);
-      if (req.url.indexOf('authorize')>=0 ||req.url.indexOf('callback')>=0) {
-         console.log('oauth shortcut');
-         next();
-      } else {
-        if (!req.session.shopify) {
-          console.log('new session');
-          ar.Shop.findByOwner(clientName, function(shop){
-              if (shop && shop.access_token) {
-                console.log('shop record authorized in the DB');
-                req.session.shopify = {
-                  access_token: shop.access_token,
-                  domain: shop.domain
-                };
-                if (req.session.shopify && req.session.shopify.access_token) {
-                  next();
-                } else {
-                  console.log('store is not authorized');
-                  res.json({success:false}, 500);
-                }
-              } else {
-                console.log('store in DB is not authorized');
-                res.json({success:false}, 500);
-              }
-          });
-        } else {
-          console.log('existing session');
-          if (req.session.shopify.access_token) {
-            next();
-          } else {
-            console.log('store is not authorized');
-            res.json({success:false}, 500);
-          }
-        }
-      }
-    };
-  }
-  
   app.get('/', function(req, res, next) {
     res.render('index.hbs', {});
   });
   
   app.get('/authorize', function(req, res){
-      req.session.shopify = {
-       domain: req.query.shopName+'.myshopify.com',
+    // if (shop) { // return }
+      authRequest = {
+       domain: req.query.shopName,
        clientId: req.query.clientId,
        clientSecret: req.query.clientSecret,
        referer: req.headers.referer,
        scope: req.query.scope
       };
       
-      ar.Shop.findByDomain(req.session.shopify.domain, function(shop){
-          if (shop && shop.access_token) {
-            console.log('shop record already authorized');
-            req.session.shopify.access_token = shop.access_token;
-            res.redirect(req.session.shopify.referer);
-          } else {
-            var authUrl = 'https://'+req.session.shopify.domain + '/admin/oauth/authorize';
-            var params = {
-              client_id: req.query.clientId,
-              scope: req.query.scope,
-            };
-            authUrl += '?' + qs.stringify(params);
-            console.log('redirecting to '+authUrl);
-            res.redirect(authUrl);
-          }
-      });
+      var authUrl = 'https://'+authRequest.domain + '/admin/oauth/authorize';
+      var params = {
+        client_id: req.query.clientId,
+        scope: req.query.scope,
+      };
+      authUrl += '?' + qs.stringify(params);
+      console.log('redirecting to '+authUrl);
+      res.redirect(authUrl);
   });
   
   app.get('/callback', function(req, res, next) {
+      var accessToken;
+    
       var authUrl = 'https://'+req.query.shop + '/admin/oauth/access_token';
       var params = {
-        client_id: req.session.shopify.clientId,
-        client_secret: req.session.shopify.clientSecret,
+        client_id: authRequest.clientId,
+        client_secret: authRequest.clientSecret,
         code: req.query.code
       };
       console.log('issuing access token request to '+authUrl);
       console.log('with params '+ JSON.stringify(params));
+      
       request.post({url: authUrl, json: params}, function (err, req2, body) {
           if (err) {
             console.log('Error requesting Shopify access token:'+authUrl);
@@ -204,25 +168,25 @@ function configureApp(config) {
                 res.json({success:false}, req2.statusCode);
               } else {
                 console.log('shopify token success:'+body.access_token);
-                req.session.shopify.access_token = body.access_token;
+                accessToken = body.access_token;
                 //store access_token in the DB
                 //get the shop info and store in DB
                 var storeInfoUrl = 'https://'+req.query.shop + '/admin/shop.json';
                 request.get({
                    url: storeInfoUrl,
                    headers: {
-                     'X-Shopify-Access-Token': req.session.shopify.access_token
+                     'X-Shopify-Access-Token': accessToken
                    }
                 }, function(err, req3, body2) {
                     if (req3.statusCode < 400) {
                       console.log('shop info:'+body2);
-                      var shop = JSON.parse(body2).shop;
-                      shop.shopifyId = shop.id; //ID is special for ar
-                      delete shop.id;           //rename it to shopifyId
-                      shop.access_token = req.session.shopify.access_token;
+                      var shopInfo = JSON.parse(body2).shop;
+                      shopInfo.shopifyId = shopInfo.id; //ID is special for ar
+                      delete shopInfo.id;           //rename it to shopifyId
+                      shopInfo.access_token = accessToken;
                       console.log('set shop owner to:'+clientName);
-                      shop.owner = clientName;
-                      var shopifyStore = ar.Shop.create(shop);
+                      shopInfo.owner = clientName;
+                      var shopifyStore = ar.Shop.create(shopInfo);
                       shopifyStore.save(function(err,obj) {
                         if (err) {
                           console.log('error creating shopify record', err);
@@ -241,12 +205,13 @@ function configureApp(config) {
                               url: webhookUrl,
                               json: webhook,
                               headers: {
-                                 'X-Shopify-Access-Token': req.session.shopify.access_token
+                                 'X-Shopify-Access-Token': accessToken
                               }
                           }, function(err, req4, body4) {
                             if (req4.statusCode < 400) {
                               console.log('webhook info:'+body4);
-                              res.redirect(req.session.shopify.referer);
+                              shop = shopifyStore;
+                              res.redirect(authRequest.referer);
                             } else {
                               console.log('error creating shopify webhook', JSON.stringify(req4));
                               res.json({success:false}, 500);
@@ -265,7 +230,7 @@ function configureApp(config) {
       });
   });
   
-  app.post('/fullfill', function(req, res, next) {
+  app.post('/fullfill', validShop, function(req, res, next) {
       console.log('fullfilling:'+JSON.stringify(req.body));
       res.json({success:true}, 200);
   });
@@ -273,12 +238,12 @@ function configureApp(config) {
   //Product routes
   //get all products
   app.get('/products', function(req, res, next) {
-    var url = 'https://'+req.session.shopify.domain + '/admin/products.json';
-    console.log('access token:'+req.session.shopify.access_token);
+    var url = 'https://'+shop.domain + '/admin/products.json';
+    console.log('access token:'+shop.access_token);
     request.get({
        url: url,
        headers: {
-         'X-Shopify-Access-Token': req.session.shopify.access_token
+         'X-Shopify-Access-Token': shop.access_token
        }
     }, function (err, req2, body) {
         if (err) {
@@ -302,21 +267,21 @@ function configureApp(config) {
     });
   });
   //get a single product
-  app.get('/products/:id', function(req, res, next) {
+  app.get('/products/:id', validShop, function(req, res, next) {
     var url;
     if (req.params.id) {
-      url =  'https://'+req.session.shopify.domain + '/admin/products/'+req.params.id+'.json';
+      url =  'https://'+shop.domain + '/admin/products/'+req.params.id+'.json';
     } else {
       console.log('product id missing');
       res.json({success:false, message:'product id missing'}, 500);
       return;
     }
-    console.log('access token:'+req.session.shopify.access_token);
+    console.log('access token:'+shop.access_token);
     console.log('accessing url:'+url);
     request.get({
        url: url,
        headers: {
-         'X-Shopify-Access-Token': req.session.shopify.access_token
+         'X-Shopify-Access-Token': shop.access_token
        }
     }, function (err, req2, body) {
         if (err) {
@@ -340,10 +305,10 @@ function configureApp(config) {
         }
     });
   });
-  app.post('/products', function(req, res, next) {
-    var url =  'https://'+req.session.shopify.domain + '/admin/products.json';
+  app.post('/products', validShop, function(req, res, next) {
+    var url =  'https://'+shop.domain + '/admin/products.json';
     var params = JSON.parse(JSON.stringify(req.body));
-    console.log('response headers:'+req.session.shopify.access_token);
+    console.log('response headers:'+shop.access_token);
     //params required by shopify
     var options = {
       "product": {
@@ -364,7 +329,7 @@ function configureApp(config) {
        url: url, 
        json: options,
        headers: {
-         'X-Shopify-Access-Token': req.session.shopify.access_token
+         'X-Shopify-Access-Token': shop.access_token
        }
     }, function (err, req2, body) {
         console.log('creating product status:'+req2.statusCode);
@@ -391,8 +356,8 @@ function configureApp(config) {
         }
     });
   });
-  app.put('/products/:id', function(req, res, next) {
-    var url =  'https://'+req.session.shopify.domain + '/admin/products/'+req.params.id+'.json';
+  app.put('/products/:id', validShop, function(req, res, next) {
+    var url =  'https://'+shop.domain + '/admin/products/'+req.params.id+'.json';
     var params = JSON.parse(JSON.stringify(req.body));
     var options = {
       "product": {
@@ -412,7 +377,7 @@ function configureApp(config) {
        url: url, 
        json: options,
        headers: {
-         'X-Shopify-Access-Token': req.session.shopify.access_token
+         'X-Shopify-Access-Token': shop.access_token
        }
     }, function (err, req2, body) {
         if (err) {
@@ -438,12 +403,12 @@ function configureApp(config) {
         }
     });
   });
-  app['delete']('/products/:id', function(req, res, next) {
-    var url =  'https://'+req.session.shopify.domain + '/admin/products/'+req.params.id+'.json';
+  app['delete']('/products/:id', validShop, function(req, res, next) {
+    var url =  'https://'+shop.domain + '/admin/products/'+req.params.id+'.json';
     request.del({
       url: url,
        headers: {
-         'X-Shopify-Access-Token': req.session.shopify.access_token
+         'X-Shopify-Access-Token': shop.access_token
        }
     }, function (err, req2, body) {
         if (req2.statusCode >= 400) {
