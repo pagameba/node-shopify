@@ -9,7 +9,6 @@ var express = require('express')
   , ccdb = require('connect-couchdb')(express)
   , app = express.createServer()
   , shop
-  , authRequest
   ;
   
   
@@ -22,6 +21,7 @@ var express = require('express')
 // });
 var clientName = ''
  , webhookDomain = '';
+ 
 module.exports = function(config) {
   clientName = config.name;
   webhookDomain = config.smtp.webhookDomain;
@@ -122,24 +122,39 @@ function configureApp(config) {
     res.render('index.hbs', {});
   });
   
+  var returnUrl;
+  
   app.get('/authorize', function(req, res){
-    // if (shop) { // return }
-      authRequest = {
-       domain: req.query.shopName,
-       clientId: req.query.clientId,
-       clientSecret: req.query.clientSecret,
-       referer: req.headers.referer,
-       scope: req.query.scope
-      };
-      
-      var authUrl = 'https://'+authRequest.domain + '/admin/oauth/authorize';
+    returnUrl = decodeURIComponent(req.query.returnUrl);
+    
+    if (shop) {
+      res.render('return', {
+        title: 'Already Authorized',
+        status: 'warn',
+        message: 'MapSherpa already appears to be authorized with your Shopify account.  If things are not working correctly then please <a href="mailto:support@mapsherpa.com">Contact MapSherpa Support</a>.',
+        returnUrl: returnUrl
+      });
+    } else if (!config.shopify || 
+               !config.shopify.shopDomain || 
+               !config.shopify.apiKey || 
+               !config.shopify.sharedSecret || 
+               !config.shopify.scope) {
+      res.render('return', {
+        title: 'Missing Shopify Configuration Information',
+        status: 'error',
+        message: 'Your MapSherpa account is missing required Shopify configuration information. Please <a href="mailto:support@mapsherpa.com">Contact MapSherpa Support</a>.',
+        returnUrl: returnUrl
+      });
+    } else {
+      var authUrl = 'https://'+config.shopify.shopDomain + '/admin/oauth/authorize';
       var params = {
-        client_id: req.query.clientId,
-        scope: req.query.scope,
+        client_id: config.shopify.apiKey,
+        scope: config.shopify.scope,
       };
       authUrl += '?' + qs.stringify(params);
       console.log('redirecting to '+authUrl);
       res.redirect(authUrl);
+    }
   });
   
   app.get('/callback', function(req, res, next) {
@@ -147,8 +162,8 @@ function configureApp(config) {
     
       var authUrl = 'https://'+req.query.shop + '/admin/oauth/access_token';
       var params = {
-        client_id: authRequest.clientId,
-        client_secret: authRequest.clientSecret,
+        client_id: config.shopify.apiKey,
+        client_secret: config.shopify.sharedSecret,
         code: req.query.code
       };
       console.log('issuing access token request to '+authUrl);
@@ -157,15 +172,30 @@ function configureApp(config) {
       request.post({url: authUrl, json: params}, function (err, req2, body) {
           if (err) {
             console.log('Error requesting Shopify access token:'+authUrl);
-            res.json({success: false, messages:[{type:'error', message:err}]}, 500);
+            res.render('return', {
+              title: 'Authorization Request Error',
+              status: 'error',
+              message: 'An error occurred when requesting authorization.  If this is a temporary network error, you can return to MapSherpa and try to authorize again.  If you see this message again, please <a href="mailto:support@mapsherpa.com">Contact MapSherpa Support</a>.',
+              returnUrl: returnUrl
+            });
           } else {
             if (body.err) {
               console.log("access token error:"+body.err);
-              res.json({success:false}, 500);
+              res.render('return', {
+                title: 'Authorization Error',
+                status: 'error',
+                message: 'The following error occurred when requesting authorization: ' + err + '</p><p>Please <a href="mailto:support@mapsherpa.com">Contact MapSherpa Support</a>.',
+                returnUrl: returnUrl
+              });
             } else {
               if (req2.statusCode > 400) {
                 console.log("access token 400 error:"+body);
-                res.json({success:false}, req2.statusCode);
+                res.render('return', {
+                  title: 'Authorization Error',
+                  status: 'error',
+                  message: 'The authorization request returned status code ' + req2.statusCode + '.</p><p>Please <a href="mailto:support@mapsherpa.com">Contact MapSherpa Support</a>.',
+                  returnUrl: returnUrl
+                });
               } else {
                 console.log('shopify token success:'+body.access_token);
                 accessToken = body.access_token;
@@ -211,7 +241,7 @@ function configureApp(config) {
                             if (req4.statusCode < 400) {
                               console.log('webhook info:'+body4);
                               shop = shopifyStore;
-                              res.redirect(authRequest.referer);
+                              res.redirect(returnUrl);
                             } else {
                               console.log('error creating shopify webhook', JSON.stringify(req4));
                               res.json({success:false}, 500);

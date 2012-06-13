@@ -3,7 +3,7 @@ var requirejs = require('requirejs')
   , cradle = require('cradle');
 
 // hardcode these for this app
-var client = 'dmsg'
+var client = 'bluetrail'
   , server = 'shopify';
 
 // local testing
@@ -14,6 +14,15 @@ var client = 'dmsg'
     user: '',
     pass: '',
     dbName: 'mapsherpa'
+};
+
+var config = {
+  // main database instance
+  host: 'couch.mapsherpa.com',
+  port:  5984,
+  user: 'PaddingtonBear',
+  pass: '2W1tiUsZRhUbMG',
+  dbName: 'mapsherpa'
 };
 
 // build configuration for requirejs when we are running in production mode
@@ -46,7 +55,7 @@ var clientConfig = {
     session: client + '-clientdb-sessions'
   },
   shopify: {
-    webhookDomain: 'http://localhost:8003'
+    webhookDomain: 'http://localhost:8003',
     ports: {
       production: 9003,
       development: 8003
